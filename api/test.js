@@ -1,3 +1,18 @@
+const CLIENT_AGENT = "JepongDevxyz-API-Tester:1.1:https://github.com/JepongDevxyz/GitHub-Claude-Test";
+
+const BLOCKED_NAME_PATTERNS = [
+  /nsfw/i,
+  /hentai/i,
+  /porn/i,
+  /erotic/i,
+  /sexual/i,
+  /\bsex\b/i,
+  /\badult\b/i,
+  /\berp\b/i,
+  /explicit/i,
+  /fetish/i
+];
+
 const TARGETS = {
   "openapis:gpt-5.4": {
     provider: "OpenAPIs",
@@ -52,9 +67,29 @@ const TARGETS = {
     model: "auto-select active model",
     apiStyle: "openai",
     endpoint: "https://oai.aihorde.net/v1/chat/completions",
-    anonymous: true
+    anonymous: true,
+    autoSelect: true
+  },
+  "aihorde:model": {
+    provider: "AI Horde",
+    model: null,
+    apiStyle: "openai",
+    endpoint: "https://oai.aihorde.net/v1/chat/completions",
+    anonymous: true,
+    selectedModel: true
   }
 };
+
+function isAllowedModelName(name) {
+  return typeof name === "string" &&
+    name.trim().length > 0 &&
+    !BLOCKED_NAME_PATTERNS.some(pattern => pattern.test(name));
+}
+
+function toNumber(value, fallback = 0) {
+  const number = Number(value);
+  return Number.isFinite(number) ? number : fallback;
+}
 
 function extractText(data, apiStyle) {
   if (apiStyle === "anthropic") {
@@ -87,41 +122,48 @@ function extractText(data, apiStyle) {
   return typeof legacy === "string" && legacy.trim() ? legacy.trim() : null;
 }
 
-async function getAIHordeModel(signal) {
-  const candidates = [
-    "https://oai.aihorde.net/v1/models?max_size=8",
-    "https://oai.aihorde.net/v1/models"
-  ];
-
-  for (const url of candidates) {
-    try {
-      const response = await fetch(url, {
-        signal,
-        headers: {
-          "Authorization": "Bearer 0000000000",
-          "Client-Agent": "JepongDevxyz-API-Tester:1.0:https://github.com/JepongDevxyz/GitHub-Claude-Test"
-        }
-      });
-
-      if (!response.ok) continue;
-      const data = await response.json();
-      const models = Array.isArray(data?.data)
-        ? data.data
-        : Array.isArray(data)
-          ? data
-          : [];
-
-      const usable = models
-        .map(item => typeof item === "string" ? item : item?.id)
-        .filter(id => typeof id === "string" && id.trim());
-
-      if (usable.length) return usable[0];
-    } catch {
-      // Try the broader model listing next.
+async function getActiveAIHordeModels(signal) {
+  const response = await fetch(
+    "https://aihorde.net/api/v2/status/models?type=text",
+    {
+      signal,
+      headers: {
+        "Accept": "application/json",
+        "Client-Agent": CLIENT_AGENT
+      }
     }
+  );
+
+  if (!response.ok) {
+    throw new Error(`AI Horde model status returned HTTP ${response.status}`);
   }
 
-  return null;
+  const data = await response.json();
+  if (!Array.isArray(data)) {
+    throw new Error("Unexpected AI Horde model status response");
+  }
+
+  return data
+    .filter(item => item && isAllowedModelName(item.name))
+    .map(item => ({
+      name: item.name,
+      workers: toNumber(item.count ?? item.workers ?? item.threads),
+      queued: toNumber(item.queued),
+      jobs: toNumber(item.jobs),
+      eta: toNumber(item.eta),
+      performance: toNumber(item.performance)
+    }));
+}
+
+function pickBestAIHordeModel(models) {
+  if (!Array.isArray(models) || !models.length) return null;
+
+  return [...models]
+    .sort((a, b) => {
+      if (b.workers !== a.workers) return b.workers - a.workers;
+      if (a.eta !== b.eta) return a.eta - b.eta;
+      return b.performance - a.performance;
+    })[0];
 }
 
 module.exports = async function handler(req, res) {
@@ -131,7 +173,7 @@ module.exports = async function handler(req, res) {
     return res.status(405).json({ ok: false, error: "POST only" });
   }
 
-  const { target } = req.body || {};
+  const { target, model: requestedModel } = req.body || {};
   const config = TARGETS[target];
 
   if (!config) {
@@ -144,9 +186,39 @@ module.exports = async function handler(req, res) {
 
   try {
     let model = config.model;
+    let modelStats = null;
 
     if (config.anonymous) {
-      model = await getAIHordeModel(controller.signal);
+      const activeModels = await getActiveAIHordeModels(controller.signal);
+
+      if (config.selectedModel) {
+        if (!isAllowedModelName(requestedModel)) {
+          return res.status(400).json({
+            ok: false,
+            provider: config.provider,
+            httpStatus: 400,
+            error: "Invalid or unavailable model selection"
+          });
+        }
+
+        modelStats = activeModels.find(item => item.name === requestedModel) || null;
+        if (!modelStats) {
+          return res.status(409).json({
+            ok: false,
+            provider: config.provider,
+            model: requestedModel,
+            httpStatus: 409,
+            latency: Date.now() - started,
+            error: "That AI Horde model is no longer active. Refresh the live model list and try another model."
+          });
+        }
+
+        model = modelStats.name;
+      } else {
+        modelStats = pickBestAIHordeModel(activeModels);
+        model = modelStats?.name || null;
+      }
+
       if (!model) {
         return res.status(503).json({
           ok: false,
@@ -154,7 +226,7 @@ module.exports = async function handler(req, res) {
           model: config.model,
           httpStatus: 503,
           latency: Date.now() - started,
-          error: "AI Horde is reachable, but no active text model could be selected right now."
+          error: "AI Horde is reachable, but no active general text model could be selected right now."
         });
       }
     }
@@ -180,7 +252,7 @@ module.exports = async function handler(req, res) {
       headers.Authorization = `Bearer ${config.anonymous ? "0000000000" : "admin"}`;
 
       if (config.anonymous) {
-        headers["Client-Agent"] = "JepongDevxyz-API-Tester:1.0:https://github.com/JepongDevxyz/GitHub-Claude-Test";
+        headers["Client-Agent"] = CLIENT_AGENT;
       }
 
       body = {
@@ -225,8 +297,9 @@ module.exports = async function handler(req, res) {
       ok: response.ok && Boolean(answer),
       provider: config.provider,
       model,
-      requestedModel: config.model,
+      requestedModel: requestedModel || config.model,
       resolvedModel: data?.model || model,
+      modelStats,
       httpStatus: response.status,
       latency,
       answer,
@@ -236,7 +309,7 @@ module.exports = async function handler(req, res) {
     return res.status(500).json({
       ok: false,
       provider: config.provider,
-      model: config.model,
+      model: requestedModel || config.model,
       latency: Date.now() - started,
       httpStatus: 500,
       error:
