@@ -16,6 +16,7 @@
       --muted: #9ca6b8;
       --ok: #238636;
       --bad: #da3633;
+      --accent: #7c9cff;
     }
     body {
       margin: 0;
@@ -24,8 +25,9 @@
       color: var(--text);
       font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-    .app { max-width: 760px; margin: auto; }
+    .app { max-width: 920px; margin: auto; }
     h1 { margin: 0 0 6px; font-size: 28px; }
+    h2 { margin: 0; font-size: 20px; }
     .sub { margin: 0; color: var(--muted); line-height: 1.5; }
     .panel {
       margin-top: 20px;
@@ -34,6 +36,8 @@
       border-radius: 18px;
       background: var(--panel);
     }
+    .row { display: flex; gap: 10px; align-items: center; }
+    .row > * { min-width: 0; }
     .note {
       margin-top: 12px;
       padding: 12px;
@@ -43,29 +47,31 @@
       line-height: 1.45;
       font-size: 14px;
     }
-    select, button {
-      width: 100%;
+    select, input, button {
       min-height: 48px;
       border-radius: 12px;
       font-size: 15px;
     }
-    select {
+    select, input {
+      width: 100%;
       padding: 0 14px;
       color: white;
       background: var(--soft);
       border: 1px solid #303746;
     }
     button {
-      margin-top: 12px;
       border: 0;
+      padding: 0 16px;
       cursor: pointer;
       font-weight: 750;
+      background: #252b37;
+      color: white;
     }
-    #testBtn { background: #fff; color: #111; }
-    #allBtn { background: #252b37; color: white; }
+    button.primary { background: #fff; color: #111; }
     button:disabled { opacity: .55; cursor: not-allowed; }
+    .stack { display: grid; gap: 10px; }
     #results { display: grid; gap: 12px; margin-top: 20px; }
-    .result {
+    .result, .model-card {
       padding: 16px;
       border: 1px solid var(--line);
       border-radius: 16px;
@@ -103,6 +109,51 @@
       font-size: 12px;
       white-space: pre-wrap;
     }
+    .section-head {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      gap: 12px;
+      margin-bottom: 12px;
+    }
+    .badge {
+      display: inline-flex;
+      align-items: center;
+      min-height: 28px;
+      padding: 0 9px;
+      border-radius: 999px;
+      background: var(--soft);
+      color: var(--muted);
+      font-size: 12px;
+      font-weight: 700;
+    }
+    .models-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 12px;
+      margin-top: 14px;
+    }
+    .model-card { display: flex; flex-direction: column; gap: 12px; }
+    .model-name { font-weight: 800; line-height: 1.35; }
+    .stats {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 8px;
+    }
+    .stat {
+      padding: 9px;
+      border-radius: 10px;
+      background: var(--soft);
+    }
+    .stat-label { color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: .04em; }
+    .stat-value { margin-top: 3px; font-size: 14px; font-weight: 800; }
+    .test-model { width: 100%; margin-top: auto; }
+    #modelState { color: var(--muted); font-size: 13px; }
+    @media (max-width: 700px) {
+      .models-grid { grid-template-columns: 1fr; }
+      .row { flex-direction: column; align-items: stretch; }
+      .row button { width: 100%; }
+    }
     @media (max-width: 520px) {
       body { padding: 18px 12px 44px; }
       h1 { font-size: 24px; }
@@ -116,28 +167,53 @@
     <p class="sub">Actual server-side generation test. HTTP 200 + real text response ang considered working.</p>
 
     <section class="panel">
-      <select id="target">
-        <optgroup label="Free Public API — no env vars">
-          <option value="aihorde:anonymous">AI Horde — Anonymous Free Model</option>
-        </optgroup>
-        <optgroup label="OpenAPIs">
-          <option value="openapis:gpt-5.4">GPT-5.4</option>
-          <option value="openapis:gpt-5.4-mini">GPT-5.4 Mini</option>
-          <option value="openapis:gpt-5.4-nano">GPT-5.4 Nano</option>
-          <option value="openapis:gpt-5.3-codex">GPT-5.3 Codex</option>
-          <option value="openapis:gpt-5.3-instant">GPT-5.3 Instant</option>
-          <option value="openapis:claude-opus-4-7">Claude Opus 4.7</option>
-          <option value="openapis:claude-sonnet-4-6">Claude Sonnet 4.6</option>
-          <option value="openapis:claude-haiku-4-5">Claude Haiku 4.5</option>
-        </optgroup>
-      </select>
+      <div class="stack">
+        <select id="target">
+          <optgroup label="Free Public API — no env vars">
+            <option value="aihorde:anonymous">AI Horde — Auto-select best active model</option>
+          </optgroup>
+          <optgroup label="OpenAPIs">
+            <option value="openapis:gpt-5.4">GPT-5.4</option>
+            <option value="openapis:gpt-5.4-mini">GPT-5.4 Mini</option>
+            <option value="openapis:gpt-5.4-nano">GPT-5.4 Nano</option>
+            <option value="openapis:gpt-5.3-codex">GPT-5.3 Codex</option>
+            <option value="openapis:gpt-5.3-instant">GPT-5.3 Instant</option>
+            <option value="openapis:claude-opus-4-7">Claude Opus 4.7</option>
+            <option value="openapis:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+            <option value="openapis:claude-haiku-4-5">Claude Haiku 4.5</option>
+          </optgroup>
+        </select>
 
-      <button id="testBtn">Test Selected</button>
-      <button id="allBtn">Test All</button>
+        <div class="row">
+          <button id="testBtn" class="primary">Test Selected</button>
+          <button id="allBtn">Test Main Targets</button>
+        </div>
+      </div>
 
       <div class="note">
-        AI Horde needs no Vercel environment variable. It uses the official anonymous key and automatically chooses an active public text model. Anonymous requests have the lowest queue priority, so they can be slower when busy.
+        AI Horde needs no Vercel environment variable. Anonymous requests use the official public anonymous access and can be slower when the queue is busy.
       </div>
+    </section>
+
+    <section class="panel">
+      <div class="section-head">
+        <div>
+          <h2>Live AI Horde Models</h2>
+          <div id="modelState">Loading currently-online text models…</div>
+        </div>
+        <span id="modelCount" class="badge">—</span>
+      </div>
+
+      <div class="row">
+        <input id="modelSearch" type="search" placeholder="Search model name…" autocomplete="off">
+        <button id="refreshModels">Refresh</button>
+      </div>
+
+      <div class="note">
+        Workers = available volunteer compute, Queue = pending tokens, ETA = estimated queue clear time, Performance = combined tokens/second. General-purpose models are shown; adult-labelled models are hidden.
+      </div>
+
+      <div id="models" class="models-grid"></div>
     </section>
 
     <section id="results"></section>
@@ -148,8 +224,14 @@ const targetSelect = document.getElementById("target");
 const testBtn = document.getElementById("testBtn");
 const allBtn = document.getElementById("allBtn");
 const results = document.getElementById("results");
+const modelsEl = document.getElementById("models");
+const modelSearch = document.getElementById("modelSearch");
+const refreshModels = document.getElementById("refreshModels");
+const modelState = document.getElementById("modelState");
+const modelCount = document.getElementById("modelCount");
 
-const TARGETS = Array.from(targetSelect.options).map(option => option.value);
+const MAIN_TARGETS = Array.from(targetSelect.options).map(option => option.value);
+let liveModels = [];
 
 function escapeHtml(value = "") {
   return String(value)
@@ -158,15 +240,97 @@ function escapeHtml(value = "") {
     .replaceAll(">", "&gt;");
 }
 
-async function testTarget(target) {
+function formatNumber(value) {
+  const n = Number(value || 0);
+  if (n >= 1000000) return (n / 1000000).toFixed(1) + "M";
+  if (n >= 1000) return (n / 1000).toFixed(1) + "K";
+  return n.toFixed(n % 1 ? 1 : 0);
+}
+
+function formatEta(seconds) {
+  const s = Math.max(0, Number(seconds || 0));
+  if (!s) return "—";
+  if (s < 60) return Math.round(s) + "s";
+  if (s < 3600) return Math.round(s / 60) + "m";
+  return (s / 3600).toFixed(1) + "h";
+}
+
+function renderModels() {
+  const q = modelSearch.value.trim().toLowerCase();
+  const filtered = liveModels.filter(item => item.name.toLowerCase().includes(q));
+
+  modelCount.textContent = `${filtered.length}/${liveModels.length}`;
+
+  if (!filtered.length) {
+    modelsEl.innerHTML = `<div class="model-card"><div class="meta">No matching active model.</div></div>`;
+    return;
+  }
+
+  modelsEl.innerHTML = filtered.map(item => `
+    <article class="model-card">
+      <div class="provider">AI Horde</div>
+      <div class="model-name">${escapeHtml(item.name)}</div>
+      <div class="stats">
+        <div class="stat">
+          <div class="stat-label">Workers</div>
+          <div class="stat-value">${escapeHtml(item.workers)}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Jobs</div>
+          <div class="stat-value">${escapeHtml(item.jobs)}</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">Queue</div>
+          <div class="stat-value">${formatNumber(item.queued)} tok</div>
+        </div>
+        <div class="stat">
+          <div class="stat-label">ETA</div>
+          <div class="stat-value">${formatEta(item.eta)}</div>
+        </div>
+        <div class="stat" style="grid-column:1/-1">
+          <div class="stat-label">Performance</div>
+          <div class="stat-value">${formatNumber(item.performance)} tok/s</div>
+        </div>
+      </div>
+      <button class="test-model primary" data-model="${escapeHtml(item.name)}">Test This Model</button>
+    </article>
+  `).join("");
+}
+
+async function loadModels() {
+  refreshModels.disabled = true;
+  modelState.textContent = "Loading currently-online text models…";
+
+  try {
+    const response = await fetch("/api/models", { cache: "no-store" });
+    const data = await response.json();
+
+    if (!response.ok || !data.ok || !Array.isArray(data.models)) {
+      throw new Error(data.error || `HTTP ${response.status}`);
+    }
+
+    liveModels = data.models;
+    modelState.textContent = `Updated ${new Date(data.updatedAt).toLocaleTimeString()} · sorted by available workers`;
+    renderModels();
+  } catch (error) {
+    liveModels = [];
+    modelCount.textContent = "0";
+    modelsEl.innerHTML = `<div class="model-card fail"><div class="status">Could not load models</div><div class="errorBox">${escapeHtml(error.message)}</div></div>`;
+    modelState.textContent = "Live model list unavailable";
+  } finally {
+    refreshModels.disabled = false;
+  }
+}
+
+async function testTarget(target, model = null, customLabel = null) {
   const id = "r-" + Date.now() + "-" + Math.random().toString(36).slice(2);
   const selected = Array.from(targetSelect.options).find(option => option.value === target);
-  const label = selected?.textContent?.trim() || target;
+  const label = customLabel || selected?.textContent?.trim() || model || target;
 
   results.insertAdjacentHTML("afterbegin", `
     <article class="result" id="${id}">
       <div class="model">${escapeHtml(label)}</div>
-      <div class="status">Testing...</div>
+      <div class="status">Testing…</div>
     </article>
   `);
 
@@ -177,27 +341,30 @@ async function testTarget(target) {
     const response = await fetch("/api/test", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ target })
+      body: JSON.stringify({ target, model })
     });
 
     const totalLatency = Math.round(performance.now() - started);
     const data = await response.json();
     const success = Boolean(data.ok && data.answer);
-
     card.classList.add(success ? "pass" : "fail");
+
+    const stats = data.modelStats ? `
+      <br>Workers: ${escapeHtml(data.modelStats.workers ?? "N/A")}
+      · Jobs: ${escapeHtml(data.modelStats.jobs ?? "N/A")}
+      · ETA: ${formatEta(data.modelStats.eta)}
+    ` : "";
 
     card.innerHTML = `
       <div class="provider">${escapeHtml(data.provider || "Unknown provider")}</div>
       <div class="model">${escapeHtml(data.resolvedModel || data.model || label)}</div>
-      <div class="status">
-        ${success ? "✅ WORKING — actual response received" : "❌ FAILED / NO RESPONSE"}
-      </div>
+      <div class="status">${success ? "✅ WORKING — actual response received" : "❌ FAILED / NO RESPONSE"}</div>
       ${data.answer ? `<div class="answer">${escapeHtml(data.answer)}</div>` : ""}
       ${data.error ? `<div class="errorBox">${escapeHtml(data.error)}</div>` : ""}
       <div class="meta">
         HTTP: ${escapeHtml(data.httpStatus ?? response.status)}<br>
         API latency: ${escapeHtml(data.latency ?? "N/A")} ms<br>
-        Total browser time: ${totalLatency} ms
+        Total browser time: ${totalLatency} ms${stats}
       </div>
       <details>
         <summary>Raw API response</summary>
@@ -229,16 +396,34 @@ allBtn.addEventListener("click", async () => {
   results.innerHTML = "";
   testBtn.disabled = true;
   allBtn.disabled = true;
-  allBtn.textContent = "Testing all...";
+  allBtn.textContent = "Testing…";
 
-  for (const target of TARGETS) {
+  for (const target of MAIN_TARGETS) {
     await testTarget(target);
   }
 
   testBtn.disabled = false;
   allBtn.disabled = false;
-  allBtn.textContent = "Test All";
+  allBtn.textContent = "Test Main Targets";
 });
+
+modelsEl.addEventListener("click", async event => {
+  const button = event.target.closest(".test-model");
+  if (!button) return;
+
+  const model = button.dataset.model;
+  button.disabled = true;
+  const oldText = button.textContent;
+  button.textContent = "Testing…";
+  await testTarget("aihorde:model", model, model);
+  button.disabled = false;
+  button.textContent = oldText;
+});
+
+modelSearch.addEventListener("input", renderModels);
+refreshModels.addEventListener("click", loadModels);
+
+loadModels();
 </script>
 </body>
 </html>
