@@ -2,144 +2,100 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta
-    name="viewport"
-    content="width=device-width,initial-scale=1"
-  >
-  <title>OpenAPIs Live Tester</title>
-
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>AI API Live Tester</title>
   <style>
-    * {
-      box-sizing: border-box;
+    * { box-sizing: border-box; }
+    :root {
+      color-scheme: dark;
+      --bg: #0b0d12;
+      --panel: #12151c;
+      --soft: #191d26;
+      --line: #252b37;
+      --text: #f5f7fb;
+      --muted: #9ca6b8;
+      --ok: #238636;
+      --bad: #da3633;
     }
-
     body {
       margin: 0;
-      padding: 24px 16px;
-      background: #0b0d12;
-      color: #f5f7fb;
-      font-family:
-        system-ui,
-        -apple-system,
-        BlinkMacSystemFont,
-        "Segoe UI",
-        sans-serif;
+      padding: 24px 16px 56px;
+      background: var(--bg);
+      color: var(--text);
+      font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
     }
-
-    .app {
-      max-width: 720px;
-      margin: auto;
-    }
-
-    h1 {
-      margin-bottom: 6px;
-      font-size: 28px;
-    }
-
-    .sub {
-      margin-top: 0;
-      color: #9ca6b8;
-      line-height: 1.5;
-    }
-
+    .app { max-width: 760px; margin: auto; }
+    h1 { margin: 0 0 6px; font-size: 28px; }
+    .sub { margin: 0; color: var(--muted); line-height: 1.5; }
     .panel {
       margin-top: 20px;
       padding: 18px;
-      border: 1px solid #252b37;
+      border: 1px solid var(--line);
       border-radius: 18px;
-      background: #12151c;
+      background: var(--panel);
     }
-
-    select,
-    button {
+    .note {
+      margin-top: 12px;
+      padding: 12px;
+      border-radius: 12px;
+      background: var(--soft);
+      color: var(--muted);
+      line-height: 1.45;
+      font-size: 14px;
+    }
+    select, button {
       width: 100%;
       min-height: 48px;
       border-radius: 12px;
       font-size: 15px;
     }
-
     select {
       padding: 0 14px;
       color: white;
-      background: #191d26;
+      background: var(--soft);
       border: 1px solid #303746;
     }
-
     button {
       margin-top: 12px;
       border: 0;
       cursor: pointer;
-      font-weight: 700;
+      font-weight: 750;
     }
-
-    #testBtn {
-      background: #fff;
-      color: #111;
-    }
-
-    #allBtn {
-      background: #252b37;
-      color: white;
-    }
-
-    button:disabled {
-      opacity: .5;
-      cursor: not-allowed;
-    }
-
-    #results {
-      display: grid;
-      gap: 12px;
-      margin-top: 20px;
-    }
-
+    #testBtn { background: #fff; color: #111; }
+    #allBtn { background: #252b37; color: white; }
+    button:disabled { opacity: .55; cursor: not-allowed; }
+    #results { display: grid; gap: 12px; margin-top: 20px; }
     .result {
       padding: 16px;
-      border: 1px solid #252b37;
+      border: 1px solid var(--line);
       border-radius: 16px;
-      background: #12151c;
+      background: var(--panel);
       overflow-wrap: anywhere;
     }
-
-    .pass {
-      border-color: #238636;
-    }
-
-    .fail {
-      border-color: #da3633;
-    }
-
-    .model {
-      font-size: 17px;
+    .pass { border-color: var(--ok); }
+    .fail { border-color: var(--bad); }
+    .provider {
+      color: var(--muted);
+      font-size: 13px;
       font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: .06em;
     }
-
-    .status {
-      margin-top: 7px;
-      font-weight: 700;
-    }
-
-    .answer {
+    .model { margin-top: 4px; font-size: 18px; font-weight: 800; }
+    .status { margin-top: 8px; font-weight: 800; line-height: 1.4; }
+    .answer, .errorBox {
       margin-top: 12px;
       padding: 12px;
       border-radius: 10px;
-      background: #191d26;
+      background: var(--soft);
       line-height: 1.5;
       white-space: pre-wrap;
     }
-
-    .meta {
-      margin-top: 8px;
-      color: #9ca6b8;
-      font-size: 13px;
-    }
-
-    details {
-      margin-top: 12px;
-    }
-
+    .meta { margin-top: 10px; color: var(--muted); font-size: 13px; line-height: 1.55; }
+    details { margin-top: 12px; }
+    summary { cursor: pointer; }
     pre {
-      max-height: 300px;
+      max-height: 320px;
       overflow: auto;
       padding: 12px;
       border-radius: 10px;
@@ -147,89 +103,53 @@
       font-size: 12px;
       white-space: pre-wrap;
     }
+    @media (max-width: 520px) {
+      body { padding: 18px 12px 44px; }
+      h1 { font-size: 24px; }
+      .panel { padding: 14px; }
+    }
   </style>
 </head>
-
 <body>
   <main class="app">
-
-    <h1>OpenAPIs Live Tester</h1>
-
-    <p class="sub">
-      Actual server-side generation test.
-      Hindi lang ping o status page.
-    </p>
+    <h1>AI API Live Tester</h1>
+    <p class="sub">Actual server-side generation test. HTTP 200 + real text response ang considered working.</p>
 
     <section class="panel">
-
-      <select id="model">
-        <optgroup label="OpenAI">
-          <option value="gpt-5.4">
-            GPT-5.4
-          </option>
-
-          <option value="gpt-5.4-mini">
-            GPT-5.4 Mini
-          </option>
-
-          <option value="gpt-5.4-nano">
-            GPT-5.4 Nano
-          </option>
-
-          <option value="gpt-5.3-codex">
-            GPT-5.3 Codex
-          </option>
-
-          <option value="gpt-5.3-instant">
-            GPT-5.3 Instant
-          </option>
+      <select id="target">
+        <optgroup label="Free Public API — no env vars">
+          <option value="aihorde:anonymous">AI Horde — Anonymous Free Model</option>
         </optgroup>
-
-        <optgroup label="Anthropic">
-          <option value="claude-opus-4-7">
-            Claude Opus 4.7
-          </option>
-
-          <option value="claude-sonnet-4-6">
-            Claude Sonnet 4.6
-          </option>
-
-          <option value="claude-haiku-4-5">
-            Claude Haiku 4.5
-          </option>
+        <optgroup label="OpenAPIs">
+          <option value="openapis:gpt-5.4">GPT-5.4</option>
+          <option value="openapis:gpt-5.4-mini">GPT-5.4 Mini</option>
+          <option value="openapis:gpt-5.4-nano">GPT-5.4 Nano</option>
+          <option value="openapis:gpt-5.3-codex">GPT-5.3 Codex</option>
+          <option value="openapis:gpt-5.3-instant">GPT-5.3 Instant</option>
+          <option value="openapis:claude-opus-4-7">Claude Opus 4.7</option>
+          <option value="openapis:claude-sonnet-4-6">Claude Sonnet 4.6</option>
+          <option value="openapis:claude-haiku-4-5">Claude Haiku 4.5</option>
         </optgroup>
       </select>
 
-      <button id="testBtn">
-        Test Selected Model
-      </button>
+      <button id="testBtn">Test Selected</button>
+      <button id="allBtn">Test All</button>
 
-      <button id="allBtn">
-        Test All Models
-      </button>
-
+      <div class="note">
+        AI Horde needs no Vercel environment variable. It uses the official anonymous key and automatically chooses an active public text model. Anonymous requests have the lowest queue priority, so they can be slower when busy.
+      </div>
     </section>
 
     <section id="results"></section>
-
   </main>
 
 <script>
-const modelSelect = document.getElementById("model");
+const targetSelect = document.getElementById("target");
 const testBtn = document.getElementById("testBtn");
 const allBtn = document.getElementById("allBtn");
 const results = document.getElementById("results");
 
-const MODELS = [
-  "gpt-5.4",
-  "gpt-5.4-mini",
-  "gpt-5.4-nano",
-  "gpt-5.3-codex",
-  "gpt-5.3-instant",
-  "claude-opus-4-7",
-  "claude-sonnet-4-6",
-  "claude-haiku-4-5"
-];
+const TARGETS = Array.from(targetSelect.options).map(option => option.value);
 
 function escapeHtml(value = "") {
   return String(value)
@@ -238,175 +158,87 @@ function escapeHtml(value = "") {
     .replaceAll(">", "&gt;");
 }
 
-async function testModel(model) {
+async function testTarget(target) {
+  const id = "r-" + Date.now() + "-" + Math.random().toString(36).slice(2);
+  const selected = Array.from(targetSelect.options).find(option => option.value === target);
+  const label = selected?.textContent?.trim() || target;
 
-  const id =
-    "r-" +
-    Date.now() +
-    "-" +
-    Math.random().toString(36).slice(2);
-
-  results.insertAdjacentHTML(
-    "afterbegin",
-    `
-      <article class="result" id="${id}">
-        <div class="model">
-          ${escapeHtml(model)}
-        </div>
-
-        <div class="status">
-          Testing...
-        </div>
-      </article>
-    `
-  );
+  results.insertAdjacentHTML("afterbegin", `
+    <article class="result" id="${id}">
+      <div class="model">${escapeHtml(label)}</div>
+      <div class="status">Testing...</div>
+    </article>
+  `);
 
   const card = document.getElementById(id);
 
   try {
-
     const started = performance.now();
-
     const response = await fetch("/api/test", {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json"
-      },
-      body: JSON.stringify({
-        model
-      })
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ target })
     });
 
-    const totalLatency =
-      Math.round(performance.now() - started);
-
+    const totalLatency = Math.round(performance.now() - started);
     const data = await response.json();
+    const success = Boolean(data.ok && data.answer);
 
-    card.classList.add(
-      data.ok && data.answer
-        ? "pass"
-        : "fail"
-    );
-
-    const success =
-      data.ok &&
-      data.answer;
+    card.classList.add(success ? "pass" : "fail");
 
     card.innerHTML = `
-      <div class="model">
-        ${escapeHtml(model)}
-      </div>
-
+      <div class="provider">${escapeHtml(data.provider || "Unknown provider")}</div>
+      <div class="model">${escapeHtml(data.resolvedModel || data.model || label)}</div>
       <div class="status">
-        ${
-          success
-            ? "✅ WORKING — actual response received"
-            : "❌ FAILED / NO RESPONSE"
-        }
+        ${success ? "✅ WORKING — actual response received" : "❌ FAILED / NO RESPONSE"}
       </div>
-
-      ${
-        data.answer
-          ? `
-            <div class="answer">
-              ${escapeHtml(data.answer)}
-            </div>
-          `
-          : ""
-      }
-
+      ${data.answer ? `<div class="answer">${escapeHtml(data.answer)}</div>` : ""}
+      ${data.error ? `<div class="errorBox">${escapeHtml(data.error)}</div>` : ""}
       <div class="meta">
-        Provider:
-        ${escapeHtml(data.provider || "unknown")}
-        <br>
-
-        HTTP:
-        ${escapeHtml(data.httpStatus || response.status)}
-        <br>
-
-        API latency:
-        ${escapeHtml(data.latency || "N/A")} ms
-        <br>
-
-        Total:
-        ${totalLatency} ms
+        HTTP: ${escapeHtml(data.httpStatus ?? response.status)}<br>
+        API latency: ${escapeHtml(data.latency ?? "N/A")} ms<br>
+        Total browser time: ${totalLatency} ms
       </div>
-
       <details>
-        <summary>
-          Raw API response
-        </summary>
-
-        <pre>${escapeHtml(
-          JSON.stringify(data.raw || data, null, 2)
-        )}</pre>
+        <summary>Raw API response</summary>
+        <pre>${escapeHtml(JSON.stringify(data.raw || data, null, 2))}</pre>
       </details>
     `;
 
     return success;
-
   } catch (error) {
-
     card.classList.add("fail");
-
     card.innerHTML = `
-      <div class="model">
-        ${escapeHtml(model)}
-      </div>
-
-      <div class="status">
-        ❌ REQUEST ERROR
-      </div>
-
-      <div class="answer">
-        ${escapeHtml(error.message)}
-      </div>
+      <div class="model">${escapeHtml(label)}</div>
+      <div class="status">❌ REQUEST ERROR</div>
+      <div class="errorBox">${escapeHtml(error.message)}</div>
     `;
-
     return false;
   }
 }
 
-testBtn.addEventListener(
-  "click",
-  async () => {
+testBtn.addEventListener("click", async () => {
+  testBtn.disabled = true;
+  allBtn.disabled = true;
+  await testTarget(targetSelect.value);
+  testBtn.disabled = false;
+  allBtn.disabled = false;
+});
 
-    testBtn.disabled = true;
-    allBtn.disabled = true;
+allBtn.addEventListener("click", async () => {
+  results.innerHTML = "";
+  testBtn.disabled = true;
+  allBtn.disabled = true;
+  allBtn.textContent = "Testing all...";
 
-    await testModel(
-      modelSelect.value
-    );
-
-    testBtn.disabled = false;
-    allBtn.disabled = false;
+  for (const target of TARGETS) {
+    await testTarget(target);
   }
-);
 
-allBtn.addEventListener(
-  "click",
-  async () => {
-
-    results.innerHTML = "";
-
-    testBtn.disabled = true;
-    allBtn.disabled = true;
-
-    allBtn.textContent =
-      "Testing all models...";
-
-    for (const model of MODELS) {
-      await testModel(model);
-    }
-
-    testBtn.disabled = false;
-    allBtn.disabled = false;
-
-    allBtn.textContent =
-      "Test All Models";
-  }
-);
+  testBtn.disabled = false;
+  allBtn.disabled = false;
+  allBtn.textContent = "Test All";
+});
 </script>
-
 </body>
 </html>
