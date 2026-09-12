@@ -47,26 +47,12 @@ const TARGETS = {
     apiStyle: "anthropic",
     endpoint: "https://api.openapis.online/anthropic/v1/messages"
   },
-  "openrouter:free": {
-    provider: "OpenRouter",
-    model: "openrouter/free",
+  "aihorde:anonymous": {
+    provider: "AI Horde",
+    model: "auto-select active model",
     apiStyle: "openai",
-    endpoint: "https://openrouter.ai/api/v1/chat/completions",
-    envKey: "OPENROUTER_API_KEY"
-  },
-  "groq:gpt-oss-20b": {
-    provider: "Groq",
-    model: "openai/gpt-oss-20b",
-    apiStyle: "openai",
-    endpoint: "https://api.groq.com/openai/v1/chat/completions",
-    envKey: "GROQ_API_KEY"
-  },
-  "groq:gpt-oss-120b": {
-    provider: "Groq",
-    model: "openai/gpt-oss-120b",
-    apiStyle: "openai",
-    endpoint: "https://api.groq.com/openai/v1/chat/completions",
-    envKey: "GROQ_API_KEY"
+    endpoint: "https://oai.aihorde.net/v1/chat/completions",
+    anonymous: true
   }
 };
 
@@ -83,9 +69,7 @@ function extractText(data, apiStyle) {
   }
 
   const content = data?.choices?.[0]?.message?.content;
-  if (typeof content === "string" && content.trim()) {
-    return content.trim();
-  }
+  if (typeof content === "string" && content.trim()) return content.trim();
 
   if (Array.isArray(content)) {
     const text = content
@@ -103,6 +87,43 @@ function extractText(data, apiStyle) {
   return typeof legacy === "string" && legacy.trim() ? legacy.trim() : null;
 }
 
+async function getAIHordeModel(signal) {
+  const candidates = [
+    "https://oai.aihorde.net/v1/models?max_size=8",
+    "https://oai.aihorde.net/v1/models"
+  ];
+
+  for (const url of candidates) {
+    try {
+      const response = await fetch(url, {
+        signal,
+        headers: {
+          "Authorization": "Bearer 0000000000",
+          "Client-Agent": "JepongDevxyz-API-Tester:1.0:https://github.com/JepongDevxyz/GitHub-Claude-Test"
+        }
+      });
+
+      if (!response.ok) continue;
+      const data = await response.json();
+      const models = Array.isArray(data?.data)
+        ? data.data
+        : Array.isArray(data)
+          ? data
+          : [];
+
+      const usable = models
+        .map(item => typeof item === "string" ? item : item?.id)
+        .filter(id => typeof id === "string" && id.trim());
+
+      if (usable.length) return usable[0];
+    } catch {
+      // Try the broader model listing next.
+    }
+  }
+
+  return null;
+}
+
 module.exports = async function handler(req, res) {
   res.setHeader("Cache-Control", "no-store");
 
@@ -117,25 +138,27 @@ module.exports = async function handler(req, res) {
     return res.status(400).json({ ok: false, error: "Invalid test target" });
   }
 
-  const apiKey = config.envKey ? process.env[config.envKey] : null;
-
-  if (config.envKey && !apiKey) {
-    return res.status(428).json({
-      ok: false,
-      configured: false,
-      provider: config.provider,
-      model: config.model,
-      requiredEnv: config.envKey,
-      httpStatus: 428,
-      error: `Missing Vercel environment variable: ${config.envKey}`
-    });
-  }
-
   const started = Date.now();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), 30000);
+  const timeout = setTimeout(() => controller.abort(), 55000);
 
   try {
+    let model = config.model;
+
+    if (config.anonymous) {
+      model = await getAIHordeModel(controller.signal);
+      if (!model) {
+        return res.status(503).json({
+          ok: false,
+          provider: config.provider,
+          model: config.model,
+          httpStatus: 503,
+          latency: Date.now() - started,
+          error: "AI Horde is reachable, but no active text model could be selected right now."
+        });
+      }
+    }
+
     const headers = { "Content-Type": "application/json" };
     let body;
 
@@ -143,7 +166,7 @@ module.exports = async function handler(req, res) {
       headers["x-api-key"] = "admin";
       headers["anthropic-version"] = "2023-06-01";
       body = {
-        model: config.model,
+        model,
         max_tokens: 96,
         stream: false,
         messages: [
@@ -154,14 +177,14 @@ module.exports = async function handler(req, res) {
         ]
       };
     } else {
-      headers.Authorization = `Bearer ${config.provider === "OpenAPIs" ? "admin" : apiKey}`;
+      headers.Authorization = `Bearer ${config.anonymous ? "0000000000" : "admin"}`;
 
-      if (config.provider === "OpenRouter") {
-        headers["X-Title"] = "JepongDevxyz API Live Tester";
+      if (config.anonymous) {
+        headers["Client-Agent"] = "JepongDevxyz-API-Tester:1.0:https://github.com/JepongDevxyz/GitHub-Claude-Test";
       }
 
       body = {
-        model: config.model,
+        model,
         stream: false,
         messages: [
           {
@@ -174,7 +197,8 @@ module.exports = async function handler(req, res) {
       if (config.provider === "OpenAPIs") {
         body.max_completion_tokens = 96;
       } else {
-        body.max_tokens = 96;
+        body.max_tokens = 48;
+        body.timeout = 45;
       }
     }
 
@@ -199,28 +223,25 @@ module.exports = async function handler(req, res) {
 
     return res.status(response.ok ? 200 : response.status).json({
       ok: response.ok && Boolean(answer),
-      configured: true,
       provider: config.provider,
-      model: config.model,
-      resolvedModel: data?.model || null,
+      model,
+      requestedModel: config.model,
+      resolvedModel: data?.model || model,
       httpStatus: response.status,
       latency,
       answer,
       raw: data
     });
   } catch (error) {
-    const latency = Date.now() - started;
-
     return res.status(500).json({
       ok: false,
-      configured: true,
       provider: config.provider,
       model: config.model,
-      latency,
+      latency: Date.now() - started,
       httpStatus: 500,
       error:
         error?.name === "AbortError"
-          ? "Request timed out after 30 seconds"
+          ? "Request timed out. Anonymous AI Horde requests can be slower because they have the lowest queue priority."
           : error?.message || "Unknown request error"
     });
   } finally {
