@@ -26,6 +26,18 @@ jobs:
           test "$(git -C runtime-src rev-parse HEAD)" = "610af608b4a3b1127244e90edf8b7be2bf94fafa"
           test "$(git -C runtime-src/termux-packages rev-parse HEAD)" = "8b23d7801cf552c7724c7deb63d9602340dfa28f"
 
+      - name: Set up Android NDK r29
+        uses: android-actions/setup-android@v3
+
+      - name: Install pinned NDK r29
+        run: |
+          yes | sdkmanager --licenses >/dev/null 2>&1 || true
+          sdkmanager "ndk;29.0.14206865"
+          mkdir -p "$HOME/lib"
+          rm -rf "$HOME/lib/android-ndk-r29"
+          ln -s "$ANDROID_SDK_ROOT/ndk/29.0.14206865" "$HOME/lib/android-ndk-r29"
+          test -x "$HOME/lib/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
+
       - name: Build DevxyzIDE-prefix OpenJDK 21 and aapt2
         run: |
           cd runtime-src
