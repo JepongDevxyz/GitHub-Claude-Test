@@ -1,0 +1,122 @@
+name: DevxyzIDE ARM64 Runtime Build
+on:
+  pull_request:
+    branches: [ main ]
+permissions:
+  contents: read
+
+jobs:
+  runtime:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install host build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y brotli jq zip unzip xz-utils zstd dpkg-dev file gawk patch \
+            curl wget git python3 python3-pip rsync gnupg ca-certificates
+
+      - name: Clone pinned runtime builder
+        run: |
+          git clone --recurse-submodules https://github.com/appdevforall/terminal-packages.git runtime-src
+          git -C runtime-src checkout --detach 610af608b4a3b1127244e90edf8b7be2bf94fafa
+          git -C runtime-src submodule update --init --recursive
+          test "$(git -C runtime-src rev-parse HEAD)" = "610af608b4a3b1127244e90edf8b7be2bf94fafa"
+          test "$(git -C runtime-src/termux-packages rev-parse HEAD)" = "8b23d7801cf552c7724c7deb63d9602340dfa28f"
+
+      - name: Build DevxyzIDE-prefix OpenJDK 21 and aapt2
+        run: |
+          cd runtime-src
+          test -f adfa-dev-team.gpg
+          ./build.sh \
+            -a aarch64 \
+            -e \
+            -p com.jepongdevxyz.idebuild \
+            -r https://packages.appdevforall.org/apt/termux-main \
+            -s "$PWD/adfa-dev-team.gpg" \
+            openjdk-21 aapt
+          echo "Built DEBs:"
+          find output/aarch64 -maxdepth 1 -type f -name '*.deb' -printf '%f\n' | sort
+          test -n "$(find output/aarch64 -maxdepth 1 -type f -name '*.deb' -print -quit)"
+
+      - name: Assemble minimal DevxyzIDE bootstrap
+        run: |
+          set -euxo pipefail
+          ROOT="$PWD/rootfs"
+          PREFIX="$ROOT/data/data/com.jepongdevxyz.idebuild/files/usr"
+          mkdir -p "$ROOT"
+          for deb in runtime-src/output/aarch64/*.deb; do
+            dpkg-deb -x "$deb" "$ROOT"
+          done
+
+          test -x "$PREFIX/bin/java"
+          test -x "$PREFIX/bin/javac"
+          test -x "$PREFIX/bin/aapt2"
+
+          cd "$PREFIX"
+          : > SYMLINKS.txt
+          while IFS= read -r -d '' link; do
+            rel="$(printf '%s' "$link" | sed 's#^\./##')"
+            target="$(readlink "$link")"
+            printf '%s←%s\n' "$target" "$rel" >> SYMLINKS.txt
+            rm "$link"
+          done < <(find . -type l -print0)
+
+          test -s SYMLINKS.txt
+
+          cat > devxyz-bootstrap.properties <<'EOF'
+          format=1
+          applicationId=com.jepongdevxyz.idebuild
+          arch=aarch64
+          upstreamCommit=610af608b4a3b1127244e90edf8b7be2bf94fafa
+          EOF
+
+          zip -qr9 "$GITHUB_WORKSPACE/devxyz-bootstrap-aarch64.zip" .
+          cd "$GITHUB_WORKSPACE"
+          sha256sum devxyz-bootstrap-aarch64.zip > devxyz-bootstrap-aarch64.zip.sha256
+
+      - name: Verify bootstrap contents and package prefix
+        run: |
+          set -euxo pipefail
+          unzip -t devxyz-bootstrap-aarch64.zip
+          unzip -l devxyz-bootstrap-aarch64.zip | tee bootstrap-files.txt
+          unzip -p devxyz-bootstrap-aarch64.zip devxyz-bootstrap.properties | tee bootstrap-meta.txt
+          grep -q '^applicationId=com.jepongdevxyz.idebuild$' bootstrap-meta.txt
+          grep -q '^arch=aarch64$' bootstrap-meta.txt
+          grep -q 'bin/java' bootstrap-files.txt
+          grep -q 'bin/javac' bootstrap-files.txt
+          grep -q 'bin/aapt2' bootstrap-files.txt
+          grep -q 'SYMLINKS.txt' bootstrap-files.txt
+
+          rm -rf verify-prefix
+          mkdir verify-prefix
+          unzip -q devxyz-bootstrap-aarch64.zip -d verify-prefix
+          test -f verify-prefix/bin/java
+          test -f verify-prefix/bin/javac
+          test -f verify-prefix/bin/aapt2
+          file verify-prefix/bin/java | tee java-file.txt
+          file verify-prefix/bin/aapt2 | tee aapt2-file.txt
+          grep -q 'ARM aarch64' java-file.txt
+          grep -q 'ARM aarch64' aapt2-file.txt
+
+          if strings verify-prefix/bin/java | grep -q '/data/data/com.itsaky.androidide/files/usr'; then
+            echo "ERROR: java contains CodeOnTheGo prefix" >&2
+            exit 1
+          fi
+          if strings verify-prefix/bin/aapt2 | grep -q '/data/data/com.itsaky.androidide/files/usr'; then
+            echo "ERROR: aapt2 contains CodeOnTheGo prefix" >&2
+            exit 1
+          fi
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DevxyzIDE-custom-arm64-bootstrap
+          path: |
+            devxyz-bootstrap-aarch64.zip
+            devxyz-bootstrap-aarch64.zip.sha256
+            bootstrap-meta.txt
+            java-file.txt
+            aapt2-file.txt
+          if-no-files-found: error
