@@ -39,20 +39,31 @@ jobs:
           mv android-ndk-r29 "$HOME/lib/android-ndk-r29"
           test -x "$HOME/lib/android-ndk-r29/toolchains/llvm/prebuilt/linux-x86_64/bin/clang"
 
-      - name: Build DevxyzIDE-prefix OpenJDK 21 and aapt2
+      - name: Prepare DevxyzIDE-prefix Termux sources
         run: |
           cd runtime-src
           test -f adfa-dev-team.gpg
           ./build.sh \
             -a aarch64 \
             -e \
+            -n \
             -p com.jepongdevxyz.idebuild \
             -r https://packages.appdevforall.org/apt/termux-main \
             -s "$PWD/adfa-dev-team.gpg" \
             openjdk-21 aapt
+
+          rm -f termux-packages/output
+          mkdir -p termux-packages/output
+
+      - name: Build DevxyzIDE-prefix OpenJDK 21 and aapt2 in official Termux container
+        run: |
+          cd runtime-src/termux-packages
+          ./scripts/run-docker.sh bash -lc \
+            'cd /home/builder/termux-packages && ./build-package.sh -a aarch64 -o /home/builder/termux-packages/output openjdk-21 aapt'
+
           echo "Built DEBs:"
-          find output/aarch64 -maxdepth 1 -type f -name '*.deb' -printf '%f\n' | sort
-          test -n "$(find output/aarch64 -maxdepth 1 -type f -name '*.deb' -print -quit)"
+          find output -maxdepth 1 -type f -name '*.deb' -printf '%f\n' | sort
+          test -n "$(find output -maxdepth 1 -type f -name '*.deb' -print -quit)"
 
       - name: Assemble minimal DevxyzIDE bootstrap
         run: |
@@ -60,7 +71,7 @@ jobs:
           ROOT="$PWD/rootfs"
           PREFIX="$ROOT/data/data/com.jepongdevxyz.idebuild/files/usr"
           mkdir -p "$ROOT"
-          for deb in runtime-src/output/aarch64/*.deb; do
+          for deb in runtime-src/termux-packages/output/*.deb; do
             dpkg-deb -x "$deb" "$ROOT"
           done
 
