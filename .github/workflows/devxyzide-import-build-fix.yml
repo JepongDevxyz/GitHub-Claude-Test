@@ -1,0 +1,185 @@
+name: DevxyzIDE Import Build Fix Verification
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - name: Set up Android SDK
+        uses: android-actions/setup-android@v3
+
+      - name: Set up Gradle 8.9
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract exact fixed source
+        run: |
+          rm -rf work
+          mkdir -p work
+          unzip -q ci/DevxyzIDE-v0.6.3-import-build-fix-source.zip -d work
+          test -f work/app/src/main/java/com/jepongdevxyz/idebuild/ProjectImportController.java
+          test -f work/app/src/main/java/com/jepongdevxyz/idebuild/core/SafeZip.java
+          grep -q 'recoverInterruptedZipImport' work/app/src/main/java/com/jepongdevxyz/idebuild/ProjectImportController.java
+          grep -q 'ZipFile' work/app/src/main/java/com/jepongdevxyz/idebuild/core/SafeZip.java
+
+      - name: Run full host and contract suite
+        run: |
+          cd work
+          sh host-tests/run.sh
+
+      - name: Reproduce large import from user video scale
+        run: |
+          cd work
+          rm -rf /tmp/devxyz-stress-out
+          mkdir -p /tmp/devxyz-stress-out
+          javac -d /tmp/devxyz-stress-out             host-tests/ProjectImportStressHostTest.java             $(find app/src/main/java/com/jepongdevxyz/idebuild/core -name '*.java' -print)             app/src/main/java/com/jepongdevxyz/idebuild/ApkLocator.java             app/src/main/java/com/jepongdevxyz/idebuild/BuildRunner.java
+          java -Ddevxyz.stress.bytes=201326592 -cp /tmp/devxyz-stress-out ProjectImportStressHostTest
+
+      - name: Install Android SDK 35
+        run: |
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          if [ ! -x "$SDKMANAGER" ]; then
+            SDKMANAGER="$(find "$ANDROID_HOME/cmdline-tools" -type f -name sdkmanager 2>/dev/null | head -1)"
+          fi
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-35" "build-tools;35.0.0"
+
+      - name: Configure build-only modern host toolchain
+        run: |
+          cat > work/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories {
+                  google()
+                  mavenCentral()
+                  gradlePluginPortal()
+              }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories {
+                  google()
+                  mavenCentral()
+              }
+          }
+          rootProject.name = 'DevxyzIDE'
+          include ':app'
+          EOF
+
+          cat > work/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > work/app/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application'
+          }
+
+          android {
+              namespace 'com.jepongdevxyz.idebuild'
+              compileSdk 35
+
+              defaultConfig {
+                  applicationId 'com.jepongdevxyz.idebuild'
+                  minSdk 19
+                  targetSdk 29
+                  versionCode 9
+                  versionName '0.6.3-import-build-fix'
+              }
+
+              buildTypes {
+                  debug { minifyEnabled false }
+                  release {
+                      minifyEnabled false
+                      proguardFiles getDefaultProguardFile('proguard-android-optimize.txt'), 'proguard-rules.pro'
+                  }
+              }
+
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+          }
+
+          dependencies {
+          }
+          EOF
+
+      - name: Build DevxyzIDE fixed APK
+        run: |
+          gradle -p work --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify DevxyzIDE APK
+        run: |
+          APK="work/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$APK"
+          unzip -t "$APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$APK" | tee apk-badging.txt
+          grep -q "package: name='com.jepongdevxyz.idebuild'" apk-badging.txt
+          grep -q "versionName='0.6.3-import-build-fix'" apk-badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/apksigner" verify --verbose --print-certs "$APK" | tee apk-signing.txt
+          cp "$APK" DevxyzIDE-v0.6.3-import-build-fix-debug.apk
+          sha256sum DevxyzIDE-v0.6.3-import-build-fix-debug.apk | tee DevxyzIDE-v0.6.3-import-build-fix-debug.apk.sha256
+
+      - name: Generate Java and Kotlin projects from production templates
+        run: |
+          rm -rf generated-ci
+          mkdir -p generated-ci/classes generated-ci/projects
+          javac -d generated-ci/classes             work/app/src/main/java/com/jepongdevxyz/idebuild/core/build/ProjectTemplateGenerator.java             work/host-tests/GenerateTemplateProject.java
+          java -cp generated-ci/classes GenerateTemplateProject generated-ci/projects java com.jepongdevxyz.importbuildjava
+          java -cp generated-ci/classes GenerateTemplateProject generated-ci/projects kotlin com.jepongdevxyz.importbuildkotlin
+
+      - name: Build generated Java project
+        run: |
+          gradle -p generated-ci/projects/DevxyzJavaSample --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Build generated Kotlin project
+        run: |
+          gradle -p generated-ci/projects/DevxyzKotlinSample --no-daemon --stacktrace :app:assembleDebug
+
+      - name: Verify generated project APKs and offline rebuild
+        run: |
+          JAVA_APK="generated-ci/projects/DevxyzJavaSample/app/build/outputs/apk/debug/app-debug.apk"
+          KOTLIN_APK="generated-ci/projects/DevxyzKotlinSample/app/build/outputs/apk/debug/app-debug.apk"
+          test -s "$JAVA_APK"
+          test -s "$KOTLIN_APK"
+          unzip -t "$JAVA_APK"
+          unzip -t "$KOTLIN_APK"
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$JAVA_APK" | tee java-sample-badging.txt
+          "$ANDROID_HOME/build-tools/35.0.0/aapt" dump badging "$KOTLIN_APK" | tee kotlin-sample-badging.txt
+          grep -q "package: name='com.jepongdevxyz.importbuildjava'" java-sample-badging.txt
+          grep -q "package: name='com.jepongdevxyz.importbuildkotlin'" kotlin-sample-badging.txt
+          gradle -p generated-ci/projects/DevxyzJavaSample --offline --no-daemon clean :app:assembleDebug
+          gradle -p generated-ci/projects/DevxyzKotlinSample --offline --no-daemon clean :app:assembleDebug
+
+      - name: Upload fixed APK and build evidence
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevxyzIDE-v0.6.3-import-build-fix
+          path: |
+            DevxyzIDE-v0.6.3-import-build-fix-debug.apk
+            DevxyzIDE-v0.6.3-import-build-fix-debug.apk.sha256
+            apk-badging.txt
+            apk-signing.txt
+            generated-ci/projects/DevxyzJavaSample/app/build/outputs/apk/debug/app-debug.apk
+            generated-ci/projects/DevxyzKotlinSample/app/build/outputs/apk/debug/app-debug.apk
+            java-sample-badging.txt
+            kotlin-sample-badging.txt
+          if-no-files-found: error
