@@ -1,0 +1,158 @@
+name: DevxyzIDE ARM64 Runtime Packs TEMP
+on:
+  pull_request:
+    branches: [ main ]
+  workflow_dispatch:
+permissions:
+  contents: read
+
+jobs:
+  validate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Extract source
+        run: |
+          rm -rf runtime-src
+          mkdir runtime-src
+          unzip -q ci/DevxyzIDE-v0.6.3-import-build-fix-source.zip -d runtime-src
+      - name: Validate pinned runtime builder
+        run: |
+          cd runtime-src/tools/runtime-builder
+          python3 -m unittest -v test_validate_config.py test_toolchain_properties.py test_bootstrap_contract.py test_manifest.py test_upstream_source_overrides.py
+          python3 validate-config.py config/runtime-pack.properties
+
+  gradle-pack:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract source
+        run: |
+          mkdir runtime-src
+          unzip -q ci/DevxyzIDE-v0.6.3-import-build-fix-source.zip -d runtime-src
+      - name: Build verified Gradle pack
+        run: bash runtime-src/tools/runtime-builder/assemble-gradle-pack.sh
+      - name: Verify
+        run: |
+          unzip -t runtime-src/tools/runtime-builder/out/gradle/gradle-8.9.devxyz-toolchain.zip
+          unzip -l runtime-src/tools/runtime-builder/out/gradle/gradle-8.9.devxyz-toolchain.zip | grep 'toolchains/gradle-8.9/bin/gradle'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devxyz-gradle-8.9-pack
+          path: runtime-src/tools/runtime-builder/out/gradle/gradle-8.9.devxyz-toolchain.zip
+          if-no-files-found: error
+
+  sdk-pack:
+    needs: validate
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Extract source
+        run: |
+          mkdir runtime-src
+          unzip -q ci/DevxyzIDE-v0.6.3-import-build-fix-source.zip -d runtime-src
+      - name: Prepare preinstalled Android SDK
+        run: |
+          echo "ANDROID_SDK_ROOT=$ANDROID_HOME" >> "$GITHUB_ENV"
+          SDKMANAGER="$ANDROID_HOME/cmdline-tools/latest/bin/sdkmanager"
+          test -x "$SDKMANAGER"
+          yes | "$SDKMANAGER" --licenses >/dev/null 2>&1 || true
+          "$SDKMANAGER" "platforms;android-35"
+      - name: Build Android SDK 35 platform pack
+        run: bash runtime-src/tools/runtime-builder/assemble-android-sdk-pack.sh
+      - name: Verify
+        run: |
+          unzip -t runtime-src/tools/runtime-builder/out/android-sdk/android-sdk-35.devxyz-toolchain.zip
+          unzip -l runtime-src/tools/runtime-builder/out/android-sdk/android-sdk-35.devxyz-toolchain.zip | grep 'toolchains/android-sdk/platforms/android-35/android.jar'
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devxyz-android-sdk-35-pack
+          path: runtime-src/tools/runtime-builder/out/android-sdk/android-sdk-35.devxyz-toolchain.zip
+          if-no-files-found: error
+
+  bootstrap-aarch64:
+    needs: validate
+    runs-on: ubuntu-latest
+    timeout-minutes: 120
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+      - name: Extract source
+        run: |
+          mkdir runtime-src
+          unzip -q ci/DevxyzIDE-v0.6.3-import-build-fix-source.zip -d runtime-src
+      - name: Install native builder prerequisites
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y git curl wget zip unzip xz-utils tar rsync python3 gpg autopoint
+          sudo mkdir -p /data
+          sudo chown -R "$(id -u):$(id -g)" /data
+          java -version
+          docker --version
+      - name: Build DevxyzIDE ARM64 bootstrap
+        run: |
+          mkdir -p runtime-src/tools/runtime-builder/out/logs
+          set -o pipefail
+          bash runtime-src/tools/runtime-builder/build-bootstrap.sh 2>&1 | tee runtime-src/tools/runtime-builder/out/logs/bootstrap-aarch64.log
+      - name: Verify stamped bootstrap
+        run: python3 runtime-src/tools/runtime-builder/test_bootstrap_contract.py runtime-src/tools/runtime-builder/out/bootstrap/devxyz-bootstrap-aarch64.zip
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: devxyz-runtime-bootstrap-build-log
+          path: runtime-src/tools/runtime-builder/out/logs/
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v4
+        with:
+          name: devxyz-runtime-bootstrap-aarch64
+          path: runtime-src/tools/runtime-builder/out/bootstrap/devxyz-bootstrap-aarch64.zip
+          if-no-files-found: error
+
+  bundle:
+    needs: [gradle-pack, sdk-pack, bootstrap-aarch64]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Extract source
+        run: |
+          mkdir runtime-src
+          unzip -q ci/DevxyzIDE-v0.6.3-import-build-fix-source.zip -d runtime-src
+      - uses: actions/download-artifact@v4
+        with:
+          name: devxyz-gradle-8.9-pack
+          path: runtime-final
+      - uses: actions/download-artifact@v4
+        with:
+          name: devxyz-android-sdk-35-pack
+          path: runtime-final
+      - uses: actions/download-artifact@v4
+        with:
+          name: devxyz-runtime-bootstrap-aarch64
+          path: runtime-final
+      - name: Generate checksums and one setup bundle
+        run: |
+          cd runtime-final
+          sha256sum *.zip | tee SHA256SUMS
+          cp ../runtime-src/tools/runtime-builder/config/runtime-pack.properties .
+          zip -9 DevxyzIDE-ARM64-Build-Runtime-v1.zip             devxyz-bootstrap-aarch64.zip             gradle-8.9.devxyz-toolchain.zip             android-sdk-35.devxyz-toolchain.zip             runtime-pack.properties             SHA256SUMS
+          unzip -t DevxyzIDE-ARM64-Build-Runtime-v1.zip
+          sha256sum DevxyzIDE-ARM64-Build-Runtime-v1.zip > DevxyzIDE-ARM64-Build-Runtime-v1.zip.sha256
+      - uses: actions/upload-artifact@v4
+        with:
+          name: DevxyzIDE-ARM64-Build-Runtime-v1
+          path: |
+            runtime-final/DevxyzIDE-ARM64-Build-Runtime-v1.zip
+            runtime-final/DevxyzIDE-ARM64-Build-Runtime-v1.zip.sha256
+            runtime-final/SHA256SUMS
+          if-no-files-found: error
