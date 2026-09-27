@@ -39,17 +39,13 @@ jobs:
         run: |
           python3 - <<'PY'
           from pathlib import Path
+          import re
 
           main = Path("work/app/src/main/java/com/jepongdevxyz/idebuild/MainActivity.java")
           s = main.read_text()
 
-          old = '''            @Override public void onImportMessage(String message) { appendConsole(message); }
-              @Override public void onProjectImported(File projectRoot) { loadProject(projectRoot); }'''
-          if old not in s:
-              old = '''            @Override public void onImportMessage(String message) { appendConsole(message); }
-              @Override public void onProjectImported(File projectRoot) { loadProject(projectRoot); }'''.replace("              ", "            ")
-          new = '''            @Override public void onImportMessage(String message) { appendConsole(message); }
-              @Override public void onProjectImported(File importedRoot) {
+          pattern = r'(@Override public void onImportMessage\(String message\) \{ appendConsole\(message\); \}\s*)@Override public void onProjectImported\(File projectRoot\) \{ loadProject\(projectRoot\); \}'
+          replacement = r'''\1@Override public void onProjectImported(File importedRoot) {
                   try {
                       loadProject(importedRoot);
                   } catch (OutOfMemoryError memory) {
@@ -59,18 +55,12 @@ jobs:
                       appendConsole("PROJECT LOAD ERROR: " + failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage()));
                   }
               }'''
-          if old not in s:
+          s, count = re.subn(pattern, replacement, s, count=1)
+          if count != 1:
               raise SystemExit("MainActivity import listener block not found")
-          s = s.replace(old, new, 1)
 
-          old = '''        if (requestCode == REQUEST_IMPORT_ZIP) {
-              try {
-                  int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
-                  getContentResolver().takePersistableUriPermission(data.getData(), flags);
-              } catch (SecurityException ignored) { }
-              projectImportController.importZip(data.getData());
-          }'''
-          new = '''        if (requestCode == REQUEST_IMPORT_ZIP) {
+          pattern = r'''if \(requestCode == REQUEST_IMPORT_ZIP\) \{\s*try \{\s*int flags = data\.getFlags\(\) & Intent\.FLAG_GRANT_READ_URI_PERMISSION;\s*getContentResolver\(\)\.takePersistableUriPermission\(data\.getData\(\), flags\);\s*\} catch \(SecurityException ignored\) \{ \}\s*projectImportController\.importZip\(data\.getData\(\)\);\s*\}'''
+          replacement = '''if (requestCode == REQUEST_IMPORT_ZIP) {
               final Uri importUri = data.getData();
               try {
                   int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
@@ -85,24 +75,15 @@ jobs:
                   appendConsole("IMPORT ERROR: " + failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage()));
               }
           }'''
-          if old not in s:
+          s, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          if count != 1:
               raise SystemExit("MainActivity ZIP result block not found")
-          s = s.replace(old, new, 1)
           main.write_text(s)
 
           controller = Path("work/app/src/main/java/com/jepongdevxyz/idebuild/ProjectImportController.java")
           s = controller.read_text()
-
-          old = '''    private void finishSuccess(final File projectRoot) {
-              activity.runOnUiThread(new Runnable() {
-                  @Override public void run() {
-                      clearBusyState();
-                      listener.onImportMessage("IMPORT COMPLETE: " + projectRoot.getAbsolutePath());
-                      listener.onProjectImported(projectRoot);
-                  }
-              });
-          }'''
-          new = '''    private void finishSuccess(final File projectRoot) {
+          pattern = r'''private void finishSuccess\(final File projectRoot\) \{\s*activity\.runOnUiThread\(new Runnable\(\) \{\s*@Override public void run\(\) \{\s*clearBusyState\(\);\s*listener\.onImportMessage\("IMPORT COMPLETE: " \+ projectRoot\.getAbsolutePath\(\)\);\s*listener\.onProjectImported\(projectRoot\);\s*\}\s*\}\);\s*\}'''
+          replacement = '''private void finishSuccess(final File projectRoot) {
               activity.runOnUiThread(new Runnable() {
                   @Override public void run() {
                       clearBusyState();
@@ -121,9 +102,9 @@ jobs:
                   }
               });
           }'''
-          if old not in s:
+          s, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          if count != 1:
               raise SystemExit("ProjectImportController finishSuccess block not found")
-          s = s.replace(old, new, 1)
           controller.write_text(s)
           PY
 
