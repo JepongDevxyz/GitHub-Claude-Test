@@ -3,6 +3,9 @@ on:
   push:
     branches:
       - fix/devxyzide-v066-import-runtime
+  pull_request:
+    branches:
+      - main
   workflow_dispatch:
 
 permissions:
