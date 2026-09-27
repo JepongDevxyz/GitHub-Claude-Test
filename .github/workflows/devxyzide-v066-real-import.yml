@@ -1,0 +1,386 @@
+name: DevxyzIDE v0.6.6 Real Import Verification
+on:
+  push:
+    branches:
+      - fix/devxyzide-v066-import-runtime
+  pull_request:
+    branches:
+      - main
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  import-device-verification:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '17'
+
+      - uses: gradle/actions/setup-gradle@v4
+        with:
+          gradle-version: '8.9'
+
+      - name: Extract v0.6.5 source
+        run: |
+          rm -rf work
+          mkdir -p work
+          unzip -q ci/DevxyzIDE-v0.6.5-build-payload.zip -d work
+          test -f work/app/src/main/java/com/jepongdevxyz/idebuild/MainActivity.java
+          test -f work/app/src/main/java/com/jepongdevxyz/idebuild/ProjectImportController.java
+
+      - name: Patch import lifecycle and activation crash guards
+        run: |
+          python3 - <<'PY'
+          from pathlib import Path
+          import re
+
+          main = Path("work/app/src/main/java/com/jepongdevxyz/idebuild/MainActivity.java")
+          s = main.read_text()
+
+          pattern = r'(@Override public void onImportMessage\(String message\) \{ appendConsole\(message\); \}\s*)@Override public void onProjectImported\(File projectRoot\) \{ loadProject\(projectRoot\); \}'
+          replacement = r'''\1@Override public void onProjectImported(File importedRoot) {
+                  try {
+                      loadProject(importedRoot);
+                  } catch (OutOfMemoryError memory) {
+                      System.gc();
+                      appendConsole("PROJECT LOAD ERROR: Not enough memory to activate the imported project. The imported files were kept.");
+                  } catch (RuntimeException failure) {
+                      appendConsole("PROJECT LOAD ERROR: " + failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage()));
+                  }
+              }'''
+          s, count = re.subn(pattern, replacement, s, count=1)
+          if count != 1:
+              raise SystemExit("MainActivity import listener block not found")
+
+          pattern = r'''if \(requestCode == REQUEST_IMPORT_ZIP\) \{\s*try \{\s*int flags = data\.getFlags\(\) & Intent\.FLAG_GRANT_READ_URI_PERMISSION;\s*getContentResolver\(\)\.takePersistableUriPermission\(data\.getData\(\), flags\);\s*\} catch \(SecurityException ignored\) \{ \}\s*projectImportController\.importZip\(data\.getData\(\)\);\s*\}'''
+          replacement = '''if (requestCode == REQUEST_IMPORT_ZIP) {
+              final Uri importUri = data.getData();
+              try {
+                  int flags = data.getFlags() & Intent.FLAG_GRANT_READ_URI_PERMISSION;
+                  if (flags != 0) getContentResolver().takePersistableUriPermission(importUri, flags);
+              } catch (SecurityException ignored) { }
+              try {
+                  projectImportController.importZip(importUri);
+              } catch (OutOfMemoryError memory) {
+                  System.gc();
+                  appendConsole("IMPORT ERROR: Not enough memory to start the import.");
+              } catch (RuntimeException failure) {
+                  appendConsole("IMPORT ERROR: " + failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage()));
+              }
+          }'''
+          s, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit("MainActivity ZIP result block not found")
+          main.write_text(s)
+
+          controller = Path("work/app/src/main/java/com/jepongdevxyz/idebuild/ProjectImportController.java")
+          s = controller.read_text()
+          pattern = r'''private void finishSuccess\(final File projectRoot\) \{\s*activity\.runOnUiThread\(new Runnable\(\) \{\s*@Override public void run\(\) \{\s*clearBusyState\(\);\s*listener\.onImportMessage\("IMPORT COMPLETE: " \+ projectRoot\.getAbsolutePath\(\)\);\s*listener\.onProjectImported\(projectRoot\);\s*\}\s*\}\);\s*\}'''
+          replacement = '''private void finishSuccess(final File projectRoot) {
+              activity.runOnUiThread(new Runnable() {
+                  @Override public void run() {
+                      clearBusyState();
+                      try {
+                          listener.onImportMessage("IMPORT COMPLETE: " + projectRoot.getAbsolutePath());
+                          listener.onProjectImported(projectRoot);
+                      } catch (OutOfMemoryError memory) {
+                          System.gc();
+                          listener.onImportMessage("IMPORT ACTIVATION ERROR: Not enough memory to open the imported project. The imported files were kept.");
+                          showResultDialog("Import completed", "The project was imported, but Android did not have enough memory to open it automatically. Reopen it from Recent Projects.");
+                      } catch (RuntimeException failure) {
+                          String detail = failure.getClass().getSimpleName() + ": " + String.valueOf(failure.getMessage());
+                          listener.onImportMessage("IMPORT ACTIVATION ERROR: " + detail);
+                          showResultDialog("Import completed", "The project files were imported safely, but opening the project failed: " + detail);
+                      }
+                  }
+              });
+          }'''
+          s, count = re.subn(pattern, replacement, s, count=1, flags=re.S)
+          if count != 1:
+              raise SystemExit("ProjectImportController finishSuccess block not found")
+          controller.write_text(s)
+          PY
+
+          grep -q 'IMPORT ACTIVATION ERROR' work/app/src/main/java/com/jepongdevxyz/idebuild/ProjectImportController.java
+          grep -q 'PROJECT LOAD ERROR' work/app/src/main/java/com/jepongdevxyz/idebuild/MainActivity.java
+
+      - name: Configure Android build and instrumentation test
+        run: |
+          cat > work/settings.gradle <<'EOF'
+          pluginManagement {
+              repositories { google(); mavenCentral(); gradlePluginPortal() }
+          }
+          dependencyResolutionManagement {
+              repositoriesMode.set(RepositoriesMode.FAIL_ON_PROJECT_REPOS)
+              repositories { google(); mavenCentral() }
+          }
+          rootProject.name='DevxyzIDE'
+          include ':app'
+          EOF
+
+          cat > work/build.gradle <<'EOF'
+          plugins {
+              id 'com.android.application' version '8.7.3' apply false
+          }
+          EOF
+
+          cat > work/gradle.properties <<'EOF'
+          android.useAndroidX=true
+          android.enableJetifier=false
+          org.gradle.jvmargs=-Xmx3g -Dfile.encoding=UTF-8
+          EOF
+
+          cat > work/app/build.gradle <<'EOF'
+          plugins { id 'com.android.application' }
+          android {
+              namespace 'com.jepongdevxyz.idebuild'
+              compileSdk 35
+              defaultConfig {
+                  applicationId 'com.jepongdevxyz.idebuild'
+                  minSdk 19
+                  targetSdk 28
+                  versionCode 12
+                  versionName '0.6.6-import-device-fix'
+                  testInstrumentationRunner 'androidx.test.runner.AndroidJUnitRunner'
+              }
+              buildTypes {
+                  debug { minifyEnabled false }
+              }
+              compileOptions {
+                  sourceCompatibility JavaVersion.VERSION_1_8
+                  targetCompatibility JavaVersion.VERSION_1_8
+              }
+          }
+          dependencies {
+              androidTestImplementation 'androidx.test:runner:1.6.2'
+              androidTestImplementation 'androidx.test:rules:1.6.1'
+              androidTestImplementation 'androidx.test:core:1.6.1'
+              androidTestImplementation 'androidx.test.ext:junit:1.2.1'
+              androidTestImplementation 'junit:junit:4.13.2'
+          }
+          EOF
+
+          mkdir -p work/app/src/androidTest/java/com/jepongdevxyz/idebuild
+          mkdir -p work/app/src/androidTest
+
+          cat > work/app/src/androidTest/AndroidManifest.xml <<'EOF'
+          <?xml version="1.0" encoding="utf-8"?>
+          <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+              <application>
+                  <provider
+                      android:name="com.jepongdevxyz.idebuild.TestProjectProvider"
+                      android:authorities="com.jepongdevxyz.idebuild.testprovider"
+                      android:exported="true"
+                      android:grantUriPermissions="true" />
+              </application>
+          </manifest>
+          EOF
+
+          cat > work/app/src/androidTest/java/com/jepongdevxyz/idebuild/TestProjectProvider.java <<'EOF'
+          package com.jepongdevxyz.idebuild;
+
+          import android.content.ContentProvider;
+          import android.content.ContentValues;
+          import android.database.Cursor;
+          import android.database.MatrixCursor;
+          import android.net.Uri;
+          import android.os.ParcelFileDescriptor;
+          import android.provider.OpenableColumns;
+
+          import java.io.File;
+          import java.io.FileOutputStream;
+          import java.io.FileNotFoundException;
+          import java.io.IOException;
+          import java.nio.charset.StandardCharsets;
+          import java.util.zip.ZipEntry;
+          import java.util.zip.ZipOutputStream;
+
+          public final class TestProjectProvider extends ContentProvider {
+              @Override public boolean onCreate() { return true; }
+
+              private File ensureZip() throws IOException {
+                  File zip = new File(getContext().getCacheDir(), "real-import-test.zip");
+                  ZipOutputStream out = new ZipOutputStream(new FileOutputStream(zip));
+                  try {
+                      add(out, "ImportedSample/settings.gradle", "pluginManagement { repositories { google(); mavenCentral(); gradlePluginPortal() } }\nrootProject.name='ImportedSample'\ninclude ':app'\n");
+                      add(out, "ImportedSample/build.gradle", "plugins { id 'com.android.application' version '8.7.3' apply false }\n");
+                      add(out, "ImportedSample/app/build.gradle", "plugins { id 'com.android.application' }\nandroid { namespace 'com.example.imported'; compileSdk 35; defaultConfig { applicationId 'com.example.imported'; minSdk 23; targetSdk 35; versionCode 1; versionName '1.0' } }\n");
+                      add(out, "ImportedSample/app/src/main/AndroidManifest.xml", "<manifest xmlns:android=\"http://schemas.android.com/apk/res/android\"><application android:theme=\"@style/AppTheme\"><activity android:name=\".MainActivity\" android:exported=\"true\"><intent-filter><action android:name=\"android.intent.action.MAIN\"/><category android:name=\"android.intent.category.LAUNCHER\"/></intent-filter></activity></application></manifest>");
+                      add(out, "ImportedSample/app/src/main/java/com/example/imported/MainActivity.java", "package com.example.imported; public class MainActivity extends android.app.Activity { }\n");
+                      add(out, "ImportedSample/app/src/main/res/values/styles.xml", "<resources><style name=\"AppTheme\" parent=\"android:style/Theme.Material.Light.NoActionBar\"/></resources>");
+                      byte[] filler = new byte[1024 * 1024];
+                      for (int i = 0; i < filler.length; i++) filler[i] = (byte)(i * 31);
+                      for (int i = 0; i < 8; i++) {
+                          ZipEntry e = new ZipEntry("ImportedSample/assets/filler-" + i + ".bin");
+                          out.putNextEntry(e);
+                          out.write(filler);
+                          out.closeEntry();
+                      }
+                  } finally {
+                      out.close();
+                  }
+                  return zip;
+              }
+
+              private static void add(ZipOutputStream out, String name, String value) throws IOException {
+                  ZipEntry e = new ZipEntry(name);
+                  out.putNextEntry(e);
+                  out.write(value.getBytes(StandardCharsets.UTF_8));
+                  out.closeEntry();
+              }
+
+              @Override public ParcelFileDescriptor openFile(Uri uri, String mode) throws FileNotFoundException {
+                  try {
+                      return ParcelFileDescriptor.open(ensureZip(), ParcelFileDescriptor.MODE_READ_ONLY);
+                  } catch (IOException e) {
+                      throw new FileNotFoundException(e.toString());
+                  }
+              }
+
+              @Override public String getType(Uri uri) { return "application/zip"; }
+
+              @Override public Cursor query(Uri uri, String[] projection, String selection, String[] selectionArgs, String sortOrder) {
+                  MatrixCursor c = new MatrixCursor(new String[]{OpenableColumns.DISPLAY_NAME, OpenableColumns.SIZE});
+                  try {
+                      File zip = ensureZip();
+                      c.addRow(new Object[]{"ImportedSample.zip", zip.length()});
+                  } catch (IOException e) {
+                      c.addRow(new Object[]{"ImportedSample.zip", 0L});
+                  }
+                  return c;
+              }
+
+              @Override public Uri insert(Uri uri, ContentValues values) { return null; }
+              @Override public int delete(Uri uri, String selection, String[] selectionArgs) { return 0; }
+              @Override public int update(Uri uri, ContentValues values, String selection, String[] selectionArgs) { return 0; }
+          }
+          EOF
+
+          cat > work/app/src/androidTest/java/com/jepongdevxyz/idebuild/ImportFlowInstrumentedTest.java <<'EOF'
+          package com.jepongdevxyz.idebuild;
+
+          import android.app.Activity;
+          import android.content.Context;
+          import android.content.Intent;
+          import android.net.Uri;
+
+          import androidx.lifecycle.Lifecycle;
+          import androidx.test.core.app.ActivityScenario;
+          import androidx.test.platform.app.InstrumentationRegistry;
+
+          import org.junit.Test;
+          import org.junit.runner.RunWith;
+          import androidx.test.ext.junit.runners.AndroidJUnit4;
+
+          import java.io.File;
+
+          import static org.junit.Assert.assertFalse;
+          import static org.junit.Assert.assertNotNull;
+          import static org.junit.Assert.assertTrue;
+
+          @RunWith(AndroidJUnit4.class)
+          public class ImportFlowInstrumentedTest {
+              @Test public void zipImportReturnsToActivityWithoutExitAndActivatesProject() throws Exception {
+                  final ActivityScenario<MainActivity> scenario = ActivityScenario.launch(MainActivity.class);
+                  final Uri uri = Uri.parse("content://com.jepongdevxyz.idebuild.testprovider/project.zip");
+
+                  scenario.onActivity(activity -> {
+                      Intent result = new Intent();
+                      result.setData(uri);
+                      result.addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION);
+                      activity.onActivityResult(5001, Activity.RESULT_OK, result);
+                  });
+
+                  Context target = InstrumentationRegistry.getInstrumentation().getTargetContext();
+                  File base = target.getExternalFilesDir(null);
+                  assertNotNull(base);
+                  File projects = new File(base, "projects");
+
+                  long deadline = System.currentTimeMillis() + 30000L;
+                  File marker = null;
+                  while (System.currentTimeMillis() < deadline) {
+                      marker = find(projects, "MainActivity.java");
+                      if (marker != null) break;
+                      Thread.sleep(250L);
+                  }
+                  assertNotNull("Imported project marker was not found", marker);
+
+                  final boolean[] finishing = new boolean[]{true};
+                  scenario.onActivity(activity -> finishing[0] = activity.isFinishing() || activity.isDestroyed());
+                  assertFalse("MainActivity exited after ZIP import", finishing[0]);
+                  assertTrue("Activity must remain at least STARTED after import",
+                          scenario.getState().isAtLeast(Lifecycle.State.STARTED));
+                  scenario.close();
+              }
+
+              private static File find(File dir, String name) {
+                  if (dir == null || !dir.exists()) return null;
+                  File[] files = dir.listFiles();
+                  if (files == null) return null;
+                  for (File f : files) {
+                      if (f.isFile() && name.equals(f.getName())) return f;
+                      if (f.isDirectory()) {
+                          File nested = find(f, name);
+                          if (nested != null) return nested;
+                      }
+                  }
+                  return null;
+              }
+          }
+          EOF
+
+      - name: Build patched APK and instrumentation APK
+        run: |
+          gradle -p work --no-daemon --stacktrace :app:assembleDebug :app:assembleDebugAndroidTest
+
+      - name: Run real Android import flow in emulator
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 35
+          arch: x86_64
+          profile: pixel_6
+          disable-animations: true
+          emulator-options: -no-window -gpu swiftshader_indirect -no-snapshot -noaudio -no-boot-anim
+          script: |
+            adb logcat -c
+            gradle -p work --no-daemon --stacktrace :app:connectedDebugAndroidTest
+            adb shell pidof com.jepongdevxyz.idebuild
+            adb shell dumpsys activity activities | grep -F com.jepongdevxyz.idebuild | head -n 20
+            adb logcat -d > emulator-logcat.txt
+            ! grep -E "FATAL EXCEPTION|Process: com\.jepongdevxyz\.idebuild.*has died|am_crash.*com\.jepongdevxyz\.idebuild" emulator-logcat.txt
+
+      - name: Verify APK package and signing
+        run: |
+          APK=work/app/build/outputs/apk/debug/app-debug.apk
+          test -s "$APK"
+          unzip -t "$APK"
+          AAPT="$ANDROID_HOME/build-tools/35.0.0/aapt"
+          APKSIGNER="$ANDROID_HOME/build-tools/35.0.0/apksigner"
+          "$AAPT" dump badging "$APK" | tee apk-badging.txt
+          grep -q "package: name='com.jepongdevxyz.idebuild'" apk-badging.txt
+          grep -q "versionName='0.6.6-import-device-fix'" apk-badging.txt
+          "$APKSIGNER" verify --verbose --print-certs "$APK" | tee apk-signing.txt
+          cp "$APK" DevxyzIDE-v0.6.6-import-device-fix-debug.apk
+          sha256sum DevxyzIDE-v0.6.6-import-device-fix-debug.apk | tee DevxyzIDE-v0.6.6-import-device-fix-debug.apk.sha256
+
+      - name: Upload test evidence
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: DevxyzIDE-v0.6.6-import-device-verification
+          path: |
+            DevxyzIDE-v0.6.6-import-device-fix-debug.apk
+            DevxyzIDE-v0.6.6-import-device-fix-debug.apk.sha256
+            apk-badging.txt
+            apk-signing.txt
+            emulator-logcat.txt
+            work/app/build/reports/androidTests/
+            work/app/build/outputs/androidTest-results/
+          if-no-files-found: warn
