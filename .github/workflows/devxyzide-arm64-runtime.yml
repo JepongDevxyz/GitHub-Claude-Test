@@ -55,7 +55,7 @@ jobs:
           docker build \
             --tag devxyzide-termux-builder:r29 \
             --file scripts/Dockerfile \
-            .
+            scripts
 
       - name: Verify NDK and build DevxyzIDE-prefix OpenJDK 21 and aapt2
         run: |
